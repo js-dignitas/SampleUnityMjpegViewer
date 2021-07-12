@@ -1,8 +1,6 @@
 using UnityEngine;
 using System;
 
-using UnityEngine.UI;
-
 /// <summary>
 /// A Unity3D Script to dipsplay Mjpeg streams. Apply this script to the mesh that you want to use to view the Mjpeg stream. 
 /// </summary>
