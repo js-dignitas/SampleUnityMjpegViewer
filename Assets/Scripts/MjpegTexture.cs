@@ -1,5 +1,8 @@
 using UnityEngine;
 using System;
+using System.Collections;
+using UnityEngine.Networking;
+using System.IO;
 
 /// <summary>
 /// A Unity3D Script to dipsplay Mjpeg streams. Apply this script to the mesh that you want to use to view the Mjpeg stream. 
@@ -39,7 +42,7 @@ public class MjpegTexture : MonoBehaviour
 
 
 
-
+    Jpeg.Jpeg jpeg = new Jpeg.Jpeg();
 
     public void Start()
     {
@@ -50,7 +53,18 @@ public class MjpegTexture : MonoBehaviour
         mjpeg.ParseStream(mjpegAddress);
         // Create a 16x16 texture with PVRTC RGBA4 format
         // and will it with raw PVRTC bytes.
-        tex = new Texture2D(initWidth, initHeight, TextureFormat.PVRTC_RGBA4, false);
+    }
+    private void LoadJpgData(byte[] bytes)
+    {
+        jpeg.ParseData(bytes);
+        img = jpeg.DecodeScan(img, true);
+        if (tex == null)
+        {
+            tex = new Texture2D(jpeg.Width, jpeg.Height, TextureFormat.RGB24, false);
+        }
+        tex.LoadRawTextureData(img);
+        tex.Apply();
+        GetComponent<Renderer>().material.mainTexture = tex;
     }
     private void OnMjpegFrameReady(object sender, FrameReadyEventArgs e)
     {
@@ -60,7 +74,11 @@ public class MjpegTexture : MonoBehaviour
     {
         Debug.Log("Error received while reading the MJPEG.");
     }
-    
+
+    bool downloading = false;
+
+    byte[] img;
+
     // Update is called once per frame
     void Update()
     {
@@ -68,8 +86,9 @@ public class MjpegTexture : MonoBehaviour
 
         if (updateFrame)
         {
-            tex.LoadImage(mjpeg.CurrentFrame);
-            // tex.Apply();
+            //tex.LoadImage(mjpeg.CurrentFrame);
+            LoadJpgData(mjpeg.CurrentFrame);
+
             // Assign texture to renderer's material.
             GetComponent<Renderer>().material.mainTexture = tex;
             updateFrame = false;
@@ -103,6 +122,9 @@ public class MjpegTexture : MonoBehaviour
 
     void OnDestroy()
     {
-        mjpeg.StopStream();
+        if (mjpeg != null)
+        {
+            mjpeg.StopStream();
+        }
     }
 }
