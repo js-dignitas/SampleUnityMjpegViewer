@@ -12,6 +12,7 @@ public class MjpegProcessor {
     private readonly byte[] JpegHeader = new byte[] { 0xff, 0xd8 };
     // pull down 1024 bytes at a time
     private int _chunkSize = 1024*4;
+    private byte[] readBuf;
     // used to cancel reading the stream
     private bool _streamActive;
     // current encoded JPEG image
@@ -30,32 +31,46 @@ public class MjpegProcessor {
     {
         _context = SynchronizationContext.Current;
         _chunkSize = chunkSize;
+        readBuf = new byte[_chunkSize];
     }
 
 
+    Uri uri;
+    string username;
+    string password;
     public void ParseStream(Uri uri)
     {
         ParseStream(uri, null, null);
     }
 
+    HttpWebRequest request;
     public void ParseStream(Uri uri, string username, string password)
     {
+        this.uri = uri;
+        this.username = username;
+        this.password = password;
         Debug.Log("Parsing Stream " + uri.ToString());
-        HttpWebRequest request = (HttpWebRequest)WebRequest.Create(uri);
+        request = (HttpWebRequest)WebRequest.Create(uri);
         if (!string.IsNullOrEmpty(username) || !string.IsNullOrEmpty(password))
             request.Credentials = new NetworkCredential(username, password);
         // asynchronously get a response
         request.BeginGetResponse(OnGetResponse, request);
     }
 
-    public void StopStream()
+    public void Refresh()
     {
         _streamActive = false;
+        ParseStream(uri, username, password);
     }
-    public static int FindBytes(byte[] buff, byte[] search)
+    public void StopStream()
+    {
+        UnityEngine.Debug.Log("Stream stopped");
+        _streamActive = false;
+    }
+    public static int FindBytes(byte[] buff, int buffLength, byte[] search)
     {
         // enumerate the buffer but don't overstep the bounds
-        for (int start = 0; start < buff.Length - search.Length; start++)
+        for (int start = 0; start < buffLength - search.Length; start++)
         {
             // we found the first character
             if (buff[start] == search[0])
@@ -77,10 +92,10 @@ public class MjpegProcessor {
         // not found
         return -1;
     }
-    public static int FindBytesInReverse(byte[] buff, byte[] search)
+    public static int FindBytesInReverse(byte[] buff, int buffLength, byte[] search)
     {
         // enumerate the buffer but don't overstep the bounds
-        for (int start = buff.Length - search.Length - 1; start > 0; start--)
+        for (int start = buffLength - search.Length - 1; start > 0; start--)
         {
             // we found the first character
             if (buff[start] == search[0])
@@ -103,10 +118,13 @@ public class MjpegProcessor {
         return -1;
     }
 
+    byte[] imageBuffer = new byte[1024 * 1024];
+
+    int count = 0;
     private void OnGetResponse(IAsyncResult asyncResult)
     {
+        count = 0;
         Debug.Log("OnGetResponse");
-        byte[] imageBuffer = new byte[1024 * 1024];
 
         Debug.Log("Starting request");
         // get the response
@@ -114,9 +132,9 @@ public class MjpegProcessor {
 
         try
         {
-            Debug.Log("OnGetResponse try entered.");
+            UnityEngine.Debug.Log(System.Threading.Thread.CurrentThread.Name + ": OnGetResponse try entered.");
             HttpWebResponse resp = (HttpWebResponse)req.EndGetResponse(asyncResult);
-            Debug.Log("response received");
+            UnityEngine.Debug.Log("response received");
             // find our magic boundary value
             string contentType = resp.Headers["Content-Type"];
             if (!string.IsNullOrEmpty(contentType) && !contentType.Contains("="))
@@ -132,29 +150,29 @@ public class MjpegProcessor {
             BinaryReader br = new BinaryReader(s);
 
             _streamActive = true;
-            byte[] buff = br.ReadBytes(_chunkSize);
+            int bufLength = br.Read(readBuf, 0, readBuf.Length);
 
             while (_streamActive)
             {
                 // find the JPEG header
-                int imageStart = FindBytes(buff, JpegHeader);// buff.Find(JpegHeader);
+                int imageStart = FindBytes(readBuf, bufLength, JpegHeader);// readBuf.Find(JpegHeader);
 
                 if (imageStart != -1)
                 {
                     // copy the start of the JPEG image to the imageBuffer
-                    int size = buff.Length - imageStart;
-                    Array.Copy(buff, imageStart, imageBuffer, 0, size);
+                    int size = bufLength - imageStart;
+                    Array.Copy(readBuf, imageStart, imageBuffer, 0, size);
 
                     while (true)
                     {
-                        buff = br.ReadBytes(_chunkSize);
+                        bufLength = br.Read(readBuf, 0, readBuf.Length);
 
                         // Find the end of the jpeg
-                        int imageEnd = FindBytes(buff, boundaryBytes);
+                        int imageEnd = FindBytes(readBuf, bufLength, boundaryBytes);
                         if (imageEnd != -1)
                         {
                             // copy the remainder of the JPEG to the imageBuffer
-                            Array.Copy(buff, 0, imageBuffer, size, imageEnd);
+                            Array.Copy(readBuf, 0, imageBuffer, size, imageEnd);
                             size += imageEnd;
 
                             // Copy the latest frame into `CurrentFrame`
@@ -165,23 +183,29 @@ public class MjpegProcessor {
                             // tell whoever's listening that we have a frame to draw
                             if (FrameReady != null)
                                 FrameReady(this, new FrameReadyEventArgs());
+                            count++;
+                            if (count > 10)
+                            {
+                                resp.Close();
+                                Refresh();
+                                break;
+                            }
                             // copy the leftover data to the start
-                            Array.Copy(buff, imageEnd, buff, 0, buff.Length - imageEnd);
+                            Array.Copy(readBuf, imageEnd, readBuf, 0, bufLength - imageEnd);
 
-                            // fill the remainder of the buffer with new data and start over
+                            // fill the remainder of the readBufer with new data and start over
                             byte[] temp = br.ReadBytes(imageEnd);
 
-                            Array.Copy(temp, 0, buff, buff.Length - imageEnd, temp.Length);
+                            Array.Copy(temp, 0, readBuf, bufLength - imageEnd, temp.Length);
                             break;
                         }
 
                         // copy all of the data to the imageBuffer
-                        Array.Copy(buff, 0, imageBuffer, size, buff.Length);
-                        size += buff.Length;
+                        Array.Copy(readBuf, 0, imageBuffer, size, bufLength);
+                        size += bufLength;
 
                         if (!_streamActive)
                         {
-                            Debug.Log("CLOSING");
                             resp.Close();
                             break;
                         }
@@ -192,6 +216,7 @@ public class MjpegProcessor {
         }
         catch (Exception ex)
         {
+            UnityEngine.Debug.LogException(ex);
             if (Error != null)
                 _context.Post(delegate { Error(this, new ErrorEventArgs() { Message = ex.Message }); }, null);
 

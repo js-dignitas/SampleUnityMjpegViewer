@@ -3,6 +3,7 @@ using System;
 using System.Collections;
 using UnityEngine.Networking;
 using System.IO;
+using System.Threading.Tasks;
 
 /// <summary>
 /// A Unity3D Script to dipsplay Mjpeg streams. Apply this script to the mesh that you want to use to view the Mjpeg stream. 
@@ -54,10 +55,15 @@ public class MjpegTexture : MonoBehaviour
         // Create a 16x16 texture with PVRTC RGBA4 format
         // and will it with raw PVRTC bytes.
     }
-    private void LoadJpgData(byte[] bytes)
+    private async Task LoadJpgData(byte[] bytes)
     {
-        jpeg.ParseData(bytes);
-        img = jpeg.DecodeScan(img, true);
+        decoding = true;
+        await Task.Run(() =>
+        {
+            jpeg.ParseData(bytes);
+            img = jpeg.DecodeScan(img, true);
+        });
+
         if (tex == null)
         {
             tex = new Texture2D(jpeg.Width, jpeg.Height, TextureFormat.RGB24, false);
@@ -65,6 +71,7 @@ public class MjpegTexture : MonoBehaviour
         tex.LoadRawTextureData(img);
         tex.Apply();
         GetComponent<Renderer>().material.mainTexture = tex;
+        decoding = false;
     }
     private void OnMjpegFrameReady(object sender, FrameReadyEventArgs e)
     {
@@ -79,23 +86,27 @@ public class MjpegTexture : MonoBehaviour
 
     byte[] img;
 
+    bool decoding = false;
     // Update is called once per frame
-    void Update()
+    async void Update()
     {
         deltaTime += Time.deltaTime;
 
         if (updateFrame)
         {
-            //tex.LoadImage(mjpeg.CurrentFrame);
-            LoadJpgData(mjpeg.CurrentFrame);
+            if (!decoding)
+            {
+                //tex.LoadImage(mjpeg.CurrentFrame);
+                await LoadJpgData(mjpeg.CurrentFrame);
 
-            // Assign texture to renderer's material.
-            GetComponent<Renderer>().material.mainTexture = tex;
-            updateFrame = false;
+                // Assign texture to renderer's material.
+                GetComponent<Renderer>().material.mainTexture = tex;
+                updateFrame = false;
 
-            mjpegDeltaTime += (deltaTime - mjpegDeltaTime) * 0.2f;
+                mjpegDeltaTime += (deltaTime - mjpegDeltaTime) * 0.2f;
 
-            deltaTime = 0.0f;
+                deltaTime = 0.0f;
+            }
         }
     }
 

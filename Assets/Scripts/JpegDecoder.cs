@@ -2,8 +2,12 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using static Unity.Mathematics.math;
+
 namespace Jpeg
 {
+    using System.Runtime.CompilerServices;
+    using Unity.Mathematics;
 
     #region Extensions
 
@@ -66,6 +70,7 @@ namespace Jpeg
             return m;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void MatrixMultiply(double[] m1, double[] m2, double[] result)
         {
             //Debug.Assert(m1 != null && m1.Length == SideSquared);
@@ -80,21 +85,24 @@ namespace Jpeg
                 }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void ToDouble(int[] m, double[] dest)
         {
             for (int i = 0; i < m.Length; i++)
                 dest[i] = (double)m[i];
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void ToInt(double[] m, int[] dest)
         {
             for (int i = 0; i < m.Length; i++)
-                dest[i] = (int)Math.Round(m[i]);
+                dest[i] = (int)round(m[i]);
         }
 
         static double[] doidctDoubleMat = null;
         static double[] doidctTempMat = null;
         static double[] doidctTempMat2 = null;
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void DoIdct(int[] m, int[] dest)
         {
             if (doidctDoubleMat == null || doidctDoubleMat.Length != m.Length)
@@ -420,9 +428,10 @@ namespace Jpeg
 
         #region Scan
 
+        List<byte> scandata = new List<byte>(5* 1024 * 1024);
         private void ReadScanData(BinaryReader reader)
         {
-            List<byte> scandata = new List<byte>(1024);
+            scandata.Clear();
             while (true)
             {
                 byte b = reader.ReadByte();
@@ -447,30 +456,9 @@ namespace Jpeg
             _scandata = scandata.ToArray();
         }
 
-        public byte Clamp(int n)
-        {
-            if (n < 0x00) return 0x00;
-            if (n > 0xff) return 0xff;
-            return (byte)n;
-        }
-
-        private static void ScaleX2(byte[] src, byte[] dst, int w, int h)
-        {
-            Debug.Assert(src.Length == w * h);
-            Debug.Assert(dst.Length == w * h * 4);
-
-            int sl = src.Length;
-            int w2 = w * 2;
-
-            for (int sy = 0, dy = 0; sy < sl; sy += w, dy += w2)
-                for (int sx = 0, dx = 0; sx < sy + w; sx++, dx += 2)
-                    dst[dx + 0] =
-                    dst[dx + 2] =
-                    dst[dx + w2 + 0] =
-                    dst[dx + w2 + 2] = src[sx];
-        }
-
         const int BPP = 3;
+        int3 int3_0xff = new int3(0xff, 0xff, 0xff);
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void YCbCrToRgb(int[][] src, byte[] dst, int mx, int my, int stride, bool bgr)
         {
             int blk = (my * 16) * stride + (mx * 16 * BPP);
@@ -487,37 +475,26 @@ namespace Jpeg
                         int ty = src[bl][yy + x] + 128;
                         int tcb = src[5][cy + (x / 2)];
                         int tcr = src[4][cy + (x / 2)];
-                        int r = (int)Math.Round(ty + (1.402 * tcr));
-                        int g = (int)Math.Round(ty - (0.344 * tcb) - (0.714 * tcr));
-                        int b = (int)Math.Round(ty + (1.772 * tcb));
+                        float3 s = new float3(1.402f * tcr, -(0.344f * tcb) - (0.714f * tcr), 1.772f * tcb);
+                        int3 rgb = new int3(round(s + (float)ty));
+                        rgb = clamp(rgb, int3.zero, int3_0xff);
+
                         if (bgr)
                         {
-                        dst[off++] = Clamp(b);
-                        dst[off++] = Clamp(g);
-                        dst[off++] = Clamp(r);
+                            dst[off++] = (byte)rgb.z;
+                            dst[off++] = (byte)rgb.y;
+                            dst[off++] = (byte)rgb.x;
                         }
                         else
                         {
-                        dst[off++] = Clamp(r);
-                        dst[off++] = Clamp(g);
-                        dst[off++] = Clamp(b);
+                            dst[off++] = (byte)rgb.x;
+                            dst[off++] = (byte)rgb.y;
+                            dst[off++] = (byte)rgb.z;
                         }
                     }
                 }
             }
         }
-
-        public void YCbCrToRgb(byte[] img, int off, int y, int cb, int cr)
-        {
-            int r = (int)(y + (1.402 * cr));
-            int g = (int)(y - (0.344 * cb) - (0.714 * cr));
-            int b = (int)(y + (1.772 * cb));
-
-            img[off + 0] = Clamp(b);
-            img[off + 1] = Clamp(g);
-            img[off + 2] = Clamp(r);
-        }
-
 
         public byte[] DecodeScan(byte[] reuse = null, bool bgr = false)
         {
@@ -533,6 +510,9 @@ namespace Jpeg
             {
                 img = new byte[numBytes];
             }
+            var totalYCbCrToRgbTime = new System.Diagnostics.Stopwatch();
+            var totalDecodeBlocks = new System.Diagnostics.Stopwatch();
+            var totalIdct = new System.Diagnostics.Stopwatch();
             using (MemoryStream ms = new MemoryStream(_scandata))
             {
                 BitReader reader = new BitReader(ms);
@@ -541,6 +521,7 @@ namespace Jpeg
                 for (int y = 0; y < yMcu; y++)
                     for (int x = 0; x < xMcu; x++)
                     {
+                        totalDecodeBlocks.Start();
                         for (int i = 0; i < 4; i++)
                         {
                             DecodeBlock(reader, false, block[i]);
@@ -555,17 +536,26 @@ namespace Jpeg
                         DecodeBlock(reader, true, block[5]);
                         block[5][0] += dCr; dCr = block[5][0];
                         DequantBlock(block[5], true);
+                        totalDecodeBlocks.Stop();
 
+                        totalIdct.Start();
                         for (int i = 0; i < 6; i++)
                             DCT.DoIdct(block[i], block[i]);
+                        totalIdct.Stop();
+
+                        totalYCbCrToRgbTime.Start();
 
                         YCbCrToRgb(block, img, x, y, stride, bgr);
+
+                        totalYCbCrToRgbTime.Stop();
                     }
             }
+            UnityEngine.Debug.Log("DecodeBlocks: " + totalDecodeBlocks.Elapsed.TotalSeconds + "s, YCbCrToRgb: " + totalYCbCrToRgbTime.Elapsed.TotalSeconds + ", idct: " + totalIdct.Elapsed.TotalSeconds);
 
             return img;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void DequantBlock(int[] block, bool chroma)
         {
             byte[] dqt = _dqt[chroma ? 1 : 0];
@@ -574,6 +564,7 @@ namespace Jpeg
                 block[i] *= dqt[i];
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int DecodeNumber(int num, int bits)
         {
             return num < (1 << (bits - 1))
@@ -581,6 +572,7 @@ namespace Jpeg
                 : num;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void DecodeBlock(BitReader reader, bool chroma, int[] result)
         {
             Huff h;
@@ -608,7 +600,17 @@ namespace Jpeg
                     case 0xf0: i += 16; continue;
                     default:
                         i += (h.v & 0xf0) >> 4;
-                        result[NaturalOrder[i]] = DecodeNumber(reader.Read(h.v & 0x0f), h.v & 0x0f);
+                        if (i >= NaturalOrder.Length)
+                        {
+                            i = 63;
+                        }
+                        int index = NaturalOrder[i];
+                        if (index >= result.Length)
+                        {
+                            UnityEngine.Debug.LogError("index " + index + " out of range of result[" + result.Length + "]");
+                            break;
+                        }
+                        result[index] = DecodeNumber(reader.Read(h.v & 0x0f), h.v & 0x0f);
                         break;
                 }
             }
