@@ -1,11 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.IO;
-using System.Runtime.InteropServices;
-
 namespace Jpeg
 {
 
@@ -70,12 +66,10 @@ namespace Jpeg
             return m;
         }
 
-        private static double[] MatrixMultiply(double[] m1, double[] m2)
+        private static void MatrixMultiply(double[] m1, double[] m2, double[] result)
         {
-            Debug.Assert(m1 != null && m1.Length == SideSquared);
-            Debug.Assert(m2 != null && m1.Length == SideSquared);
-
-            double[] result = new double[m1.Length];
+            //Debug.Assert(m1 != null && m1.Length == SideSquared);
+            //Debug.Assert(m2 != null && m1.Length == SideSquared);
             for (int y = 0; y < Side; y++)
                 for (int x = 0; x < Side; x++)
                 {
@@ -84,40 +78,35 @@ namespace Jpeg
                         sum += m1[y * Side + k] * m2[k * Side + x];
                     result[y * Side + x] = sum;
                 }
-
-            return result;
         }
 
-        public static double[] ToDouble(int[] m)
+        public static void ToDouble(int[] m, double[] dest)
         {
-            double[] r = new double[m.Length];
             for (int i = 0; i < m.Length; i++)
-                r[i] = (double)m[i];
-            return r;
+                dest[i] = (double)m[i];
         }
 
-        public static int[] ToInt(double[] m)
+        public static void ToInt(double[] m, int[] dest)
         {
-            int[] r = new int[m.Length];
             for (int i = 0; i < m.Length; i++)
-                r[i] = (int)Math.Round(m[i]);
-            return r;
+                dest[i] = (int)Math.Round(m[i]);
         }
 
-        public static int[] DoDct(int[] m)
+        static double[] doidctDoubleMat = null;
+        static double[] doidctTempMat = null;
+        static double[] doidctTempMat2 = null;
+        public static void DoIdct(int[] m, int[] dest)
         {
-            double[] source = ToDouble(m);
-            source = MatrixMultiply(Dct, source);
-            source = MatrixMultiply(source, DctT);
-            return ToInt(source);
-        }
-
-        public static int[] DoIdct(int[] m)
-        {
-            double[] source = ToDouble(m);
-            source = MatrixMultiply(DctT, source);
-            source = MatrixMultiply(source, Dct);
-            return ToInt(source);
+            if (doidctDoubleMat == null || doidctDoubleMat.Length != m.Length)
+            {
+                doidctDoubleMat = new double[m.Length];
+                doidctTempMat = new double[m.Length];
+                doidctTempMat2 = new double[m.Length];
+            }
+            ToDouble(m, doidctDoubleMat);
+            MatrixMultiply(DctT, doidctDoubleMat, doidctTempMat);
+            MatrixMultiply(doidctTempMat, Dct, doidctTempMat2);
+            ToInt(doidctTempMat2, dest);
         }
 
 #if false
@@ -210,6 +199,7 @@ namespace Jpeg
         private byte[][] _dqt = new byte[4][];
         private Huff[][] _dht = new Huff[4][];
         private byte[] _scandata;
+        int[][] block = new int[6][];
 
         #endregion
 
@@ -232,14 +222,33 @@ namespace Jpeg
                 ParseFile(reader);
         }
 
-        private void ParseFile(BinaryReader reader)
+        public Jpeg()
+        {
+            Init();
+        }
+        protected void Init()
+        {
+            for(int i = 0; i < block.Length; i++)
+            {
+                block[i] = new int[64];
+            }
+        }
+        public void ParseData(byte[] data)
+        {
+            Init();
+            using (var mem = new MemoryStream(data))
+            using (var reader = new BinaryReader(mem))
+                ParseFile(reader);
+        }
+        public void ParseFile(BinaryReader reader)
         {
             while (reader.PeekChar() >= 0)
             {
                 if (reader.ReadByte() != 0xff)
                     throw new Exception("Cannot find next marker");
 
-                switch (reader.ReadByte())
+                byte b = reader.ReadByte();
+                switch (b)
                 {
                     // SOF0
                     case 0xc0: ParseSof0(reader); break;
@@ -270,15 +279,21 @@ namespace Jpeg
                     case 0xed: ParseApp(reader, 13); break;
                     case 0xee: ParseApp(reader, 14); break;
                     case 0xef: ParseApp(reader, 15); break;
+                    case 0xfe: ParseComment(reader); break;
 
                     default:
-                        throw new Exception("Unknown marker");
+                        throw new Exception("Unknown marker " + b);
                 }
             }
         }
 
         #region AppN
 
+        private void ParseComment(BinaryReader reader)
+        {
+            int length = reader.ReadInt16BE();
+            reader.BaseStream.Seek(length - 2, SeekOrigin.Current);
+        }
         private void ParseApp(BinaryReader reader, int app)
         {
             int length = reader.ReadInt16BE();
@@ -456,7 +471,7 @@ namespace Jpeg
         }
 
         const int BPP = 3;
-        public void YCbCrToRgb(int[][] src, byte[] dst, int mx, int my, int stride)
+        public void YCbCrToRgb(int[][] src, byte[] dst, int mx, int my, int stride, bool bgr)
         {
             int blk = (my * 16) * stride + (mx * 16 * BPP);
             for (int bl = 0; bl < 4; bl++)
@@ -475,9 +490,18 @@ namespace Jpeg
                         int r = (int)Math.Round(ty + (1.402 * tcr));
                         int g = (int)Math.Round(ty - (0.344 * tcb) - (0.714 * tcr));
                         int b = (int)Math.Round(ty + (1.772 * tcb));
+                        if (bgr)
+                        {
+                        dst[off++] = Clamp(b);
+                        dst[off++] = Clamp(g);
+                        dst[off++] = Clamp(r);
+                        }
+                        else
+                        {
                         dst[off++] = Clamp(r);
                         dst[off++] = Clamp(g);
                         dst[off++] = Clamp(b);
+                        }
                     }
                 }
             }
@@ -494,7 +518,8 @@ namespace Jpeg
             img[off + 2] = Clamp(r);
         }
 
-        public byte[] DecodeScan()
+
+        public byte[] DecodeScan(byte[] reuse = null, bool bgr = false)
         {
             // Calculate the size of the image in mcu's
             int xMcu = (_xres + 15) / 16;
@@ -502,35 +527,39 @@ namespace Jpeg
             int mcu = xMcu * yMcu;
 
             int stride = ((xMcu * 16 * BPP) + 3) & ~0x03;
-            byte[] img = new byte[yMcu * 16 * stride];
+            byte[] img = reuse;
+            int numBytes = yMcu * 16 * stride;
+            if (img == null || img.Length != numBytes)
+            {
+                img = new byte[numBytes];
+            }
             using (MemoryStream ms = new MemoryStream(_scandata))
             {
                 BitReader reader = new BitReader(ms);
 
                 int dY = 0, dCb = 0, dCr = 0;
-                int[][] block = new int[6][];
                 for (int y = 0; y < yMcu; y++)
                     for (int x = 0; x < xMcu; x++)
                     {
                         for (int i = 0; i < 4; i++)
                         {
-                            block[i] = DecodeBlock(reader, false);
+                            DecodeBlock(reader, false, block[i]);
                             block[i][0] += dY; dY = block[i][0];
                             DequantBlock(block[i], false);
                         }
 
-                        block[4] = DecodeBlock(reader, true);
+                        DecodeBlock(reader, true, block[4]);
                         block[4][0] += dCb; dCb = block[4][0];
                         DequantBlock(block[4], true);
 
-                        block[5] = DecodeBlock(reader, true);
+                        DecodeBlock(reader, true, block[5]);
                         block[5][0] += dCr; dCr = block[5][0];
                         DequantBlock(block[5], true);
 
                         for (int i = 0; i < 6; i++)
-                            block[i] = DCT.DoIdct(block[i]);
+                            DCT.DoIdct(block[i], block[i]);
 
-                        YCbCrToRgb(block, img, x, y, stride);
+                        YCbCrToRgb(block, img, x, y, stride, bgr);
                     }
             }
 
@@ -552,17 +581,20 @@ namespace Jpeg
                 : num;
         }
 
-        private int[] DecodeBlock(BitReader reader, bool chroma)
+        private void DecodeBlock(BitReader reader, bool chroma, int[] result)
         {
             Huff h;
             int tab = chroma ? 1 : 0;
-
-            var result = new int[64];
 
             // Read DC value
             h = _dht[0 + tab][reader.Peek(16)];
             reader.Skip(h.b);
             result[0] = DecodeNumber(reader.Read(h.v), h.v);
+
+            for (int i = 1; i < 64; i++)
+            {
+                result[i] = 0;
+            }
 
             // Read AC values
             for (int i = 1; i < 64; i++)
@@ -581,7 +613,6 @@ namespace Jpeg
                 }
             }
 
-            return result;
         }
 
         #endregion
@@ -610,11 +641,6 @@ namespace Jpeg
 
             var jpeg = new Jpeg(args[0]);
             byte[] img = jpeg.DecodeScan();
-            var bmp = new Bitmap((jpeg.Width + 15) & ~0xf, (jpeg.Height + 15) & ~0xf, PixelFormat.Format24bppRgb);
-            var dat = bmp.LockBits(new Rectangle(Point.Empty, bmp.Size), ImageLockMode.ReadWrite, PixelFormat.Format24bppRgb);
-            Marshal.Copy(img, 0, dat.Scan0, img.Length);
-            bmp.UnlockBits(dat);
-            bmp.Save(args[1], ImageFormat.Png);
         }
     }
 
