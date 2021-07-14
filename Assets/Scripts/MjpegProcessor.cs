@@ -49,7 +49,7 @@ public class MjpegProcessor {
         this.uri = uri;
         this.username = username;
         this.password = password;
-        Debug.Log("Parsing Stream " + uri.ToString());
+        //Debug.Log("Parsing Stream " + uri.ToString());
         request = (HttpWebRequest)WebRequest.Create(uri);
         if (!string.IsNullOrEmpty(username) || !string.IsNullOrEmpty(password))
             request.Credentials = new NetworkCredential(username, password);
@@ -64,7 +64,7 @@ public class MjpegProcessor {
     }
     public void StopStream()
     {
-        UnityEngine.Debug.Log("Stream stopped");
+        //UnityEngine.Debug.Log("Stream stopped");
         _streamActive = false;
     }
     public static int FindBytes(byte[] buff, int buffLength, byte[] search)
@@ -124,17 +124,17 @@ public class MjpegProcessor {
     private void OnGetResponse(IAsyncResult asyncResult)
     {
         count = 0;
-        Debug.Log("OnGetResponse");
+        //Debug.Log("OnGetResponse");
 
-        Debug.Log("Starting request");
+        //Debug.Log("Starting request");
         // get the response
         HttpWebRequest req = (HttpWebRequest)asyncResult.AsyncState;
 
         try
         {
-            UnityEngine.Debug.Log(System.Threading.Thread.CurrentThread.Name + ": OnGetResponse try entered.");
+            //Debug.Log(System.Threading.Thread.CurrentThread.Name + ": OnGetResponse try entered.");
             HttpWebResponse resp = (HttpWebResponse)req.EndGetResponse(asyncResult);
-            UnityEngine.Debug.Log("response received");
+            //Debug.Log("response received");
             // find our magic boundary value
             string contentType = resp.Headers["Content-Type"];
             if (!string.IsNullOrEmpty(contentType) && !contentType.Contains("="))

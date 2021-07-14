@@ -521,7 +521,7 @@ namespace Jpeg
                 for (int y = 0; y < yMcu; y++)
                     for (int x = 0; x < xMcu; x++)
                     {
-                        totalDecodeBlocks.Start();
+                        //totalDecodeBlocks.Start();
                         for (int i = 0; i < 4; i++)
                         {
                             DecodeBlock(reader, false, block[i]);
@@ -536,21 +536,21 @@ namespace Jpeg
                         DecodeBlock(reader, true, block[5]);
                         block[5][0] += dCr; dCr = block[5][0];
                         DequantBlock(block[5], true);
-                        totalDecodeBlocks.Stop();
+                        //totalDecodeBlocks.Stop();
 
-                        totalIdct.Start();
+                        //totalIdct.Start();
                         for (int i = 0; i < 6; i++)
                             DCT.DoIdct(block[i], block[i]);
-                        totalIdct.Stop();
+                        //totalIdct.Stop();
 
-                        totalYCbCrToRgbTime.Start();
+                        //totalYCbCrToRgbTime.Start();
 
                         YCbCrToRgb(block, img, x, y, stride, bgr);
 
-                        totalYCbCrToRgbTime.Stop();
+                        //totalYCbCrToRgbTime.Stop();
                     }
             }
-            UnityEngine.Debug.Log("DecodeBlocks: " + totalDecodeBlocks.Elapsed.TotalSeconds + "s, YCbCrToRgb: " + totalYCbCrToRgbTime.Elapsed.TotalSeconds + ", idct: " + totalIdct.Elapsed.TotalSeconds);
+            //UnityEngine.Debug.Log("DecodeBlocks: " + totalDecodeBlocks.Elapsed.TotalSeconds + "s, YCbCrToRgb: " + totalYCbCrToRgbTime.Elapsed.TotalSeconds + ", idct: " + totalIdct.Elapsed.TotalSeconds);
 
             return img;
         }

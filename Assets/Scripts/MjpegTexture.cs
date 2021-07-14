@@ -29,6 +29,9 @@ public class MjpegTexture : MonoBehaviour
     [Tooltip("Chunk size for stream processor in kilobytes.")]
     public int chunkSize = 4;
 
+    public Material material;
+    bool materialIsCopy = false;
+
     Texture2D tex;
 
     const int initWidth = 2;
@@ -41,8 +44,6 @@ public class MjpegTexture : MonoBehaviour
     float deltaTime = 0.0f;
     float mjpegDeltaTime = 0.0f;
 
-
-
     Jpeg.Jpeg jpeg = new Jpeg.Jpeg();
 
     public void Start()
@@ -52,8 +53,22 @@ public class MjpegTexture : MonoBehaviour
         mjpeg.Error += OnMjpegError;
         Uri mjpegAddress = new Uri(streamAddress);
         mjpeg.ParseStream(mjpegAddress);
-        // Create a 16x16 texture with PVRTC RGBA4 format
-        // and will it with raw PVRTC bytes.
+        if (material == null)
+        {
+            material = GetComponent<Renderer>().material;
+        }
+        else
+        {
+            material = new Material(material);
+            GetComponent<Renderer>().sharedMaterial = material;
+        }
+    }
+    public void Stop()
+    {
+        if (mjpeg != null)
+        {
+            mjpeg.StopStream();
+        }
     }
     private async Task LoadJpgData(byte[] bytes)
     {
@@ -64,13 +79,18 @@ public class MjpegTexture : MonoBehaviour
             img = jpeg.DecodeScan(img, true);
         });
 
+        // Could have been destroyed during the Task
+        if (material == null)
+        {
+            return;
+        }
         if (tex == null)
         {
             tex = new Texture2D(jpeg.Width, jpeg.Height, TextureFormat.RGB24, false);
         }
         tex.LoadRawTextureData(img);
         tex.Apply();
-        GetComponent<Renderer>().material.mainTexture = tex;
+        material.mainTexture = tex;
         decoding = false;
     }
     private void OnMjpegFrameReady(object sender, FrameReadyEventArgs e)
@@ -99,8 +119,10 @@ public class MjpegTexture : MonoBehaviour
                 //tex.LoadImage(mjpeg.CurrentFrame);
                 await LoadJpgData(mjpeg.CurrentFrame);
 
-                // Assign texture to renderer's material.
-                GetComponent<Renderer>().material.mainTexture = tex;
+                if (material == null)
+                {
+                    return;
+                }
                 updateFrame = false;
 
                 mjpegDeltaTime += (deltaTime - mjpegDeltaTime) * 0.2f;
@@ -133,9 +155,7 @@ public class MjpegTexture : MonoBehaviour
 
     void OnDestroy()
     {
-        if (mjpeg != null)
-        {
-            mjpeg.StopStream();
-        }
+        Stop();
+        Destroy(material);
     }
 }
