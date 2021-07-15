@@ -15,8 +15,25 @@ public class MjpegTexture : MonoBehaviour
     /// Example: "http://extcam-16.se.axis.com/mjpg/video.mjpg"
     /// </param>
     [Tooltip("Set this to be the network address of the mjpg stream. ")]
-    public string streamAddress;
+    [SerializeField]
+    private string streamAddress;
 
+    public string StreamAddress
+    {
+        get => streamAddress;
+        set
+        {
+            if (streamAddress != value)
+            {
+                streamAddress = value;
+                if (playing)
+                {
+                    Stop();
+                    Play();
+                }
+            }
+        }
+    }
     /// <summary>
     /// Show fps (OnGUI).
     /// </summary>
@@ -46,13 +63,11 @@ public class MjpegTexture : MonoBehaviour
 
     Jpeg.Jpeg jpeg = new Jpeg.Jpeg();
 
+    public bool autoPlay = true;
+
+    private bool playing = false;
     public void Start()
     {
-        mjpeg = new MjpegProcessor(chunkSize * 1024);
-        mjpeg.FrameReady += OnMjpegFrameReady;
-        mjpeg.Error += OnMjpegError;
-        Uri mjpegAddress = new Uri(streamAddress);
-        mjpeg.ParseStream(mjpegAddress);
         if (material == null)
         {
             material = GetComponent<Renderer>().material;
@@ -62,12 +77,42 @@ public class MjpegTexture : MonoBehaviour
             material = new Material(material);
             GetComponent<Renderer>().sharedMaterial = material;
         }
+        if (autoPlay)
+        {
+            Play();
+        }
     }
+
+    private void Init()
+    {
+        if (mjpeg == null)
+        {
+            mjpeg = new MjpegProcessor(chunkSize * 1024);
+            mjpeg.FrameReady += OnMjpegFrameReady;
+            mjpeg.Error += OnMjpegError;
+        }
+    }
+    public void Play()
+    {
+        Init();
+        if (!playing)
+        {
+            playing = true;
+            Uri mjpegAddress = new Uri(streamAddress);
+            mjpeg.ParseStream(mjpegAddress);
+        }
+    }
+
     public void Stop()
     {
-        if (mjpeg != null)
+        if (playing)
         {
-            mjpeg.StopStream();
+            playing = false;
+            if (mjpeg != null)
+            {
+                mjpeg.StopStream();
+                mjpeg = null;
+            }
         }
     }
     private async Task LoadJpgData(byte[] bytes)
@@ -79,6 +124,7 @@ public class MjpegTexture : MonoBehaviour
             img = jpeg.DecodeScan(img, true);
         });
 
+        decoding = false;
         // Could have been destroyed during the Task
         if (material == null)
         {
@@ -90,8 +136,8 @@ public class MjpegTexture : MonoBehaviour
         }
         tex.LoadRawTextureData(img);
         tex.Apply();
+
         material.mainTexture = tex;
-        decoding = false;
     }
     private void OnMjpegFrameReady(object sender, FrameReadyEventArgs e)
     {
@@ -116,14 +162,18 @@ public class MjpegTexture : MonoBehaviour
         {
             if (!decoding)
             {
-                //tex.LoadImage(mjpeg.CurrentFrame);
-                await LoadJpgData(mjpeg.CurrentFrame);
+                if (mjpeg.CurrentFrame != null)
+                {
+                    //tex.LoadImage(mjpeg.CurrentFrame);
+                    await LoadJpgData(mjpeg.CurrentFrame);
+                }
+
+                updateFrame = false;
 
                 if (material == null)
                 {
                     return;
                 }
-                updateFrame = false;
 
                 mjpegDeltaTime += (deltaTime - mjpegDeltaTime) * 0.2f;
 
