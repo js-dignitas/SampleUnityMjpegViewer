@@ -1,11 +1,15 @@
 using UnityEngine;
 using System;
 using System.IO;
+
+#if NET_4_6
 using System.Drawing;
 using System.Drawing.Imaging;
+using Graphics = System.Drawing.Graphics;
+#endif
+
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using Graphics = System.Drawing.Graphics;
 
 /// <summary>
 /// A Unity3D Script to dipsplay Mjpeg streams. Apply this script to the mesh that you want to use to view the Mjpeg stream. 
@@ -19,7 +23,11 @@ public class MjpegTexture : MonoBehaviour
     [Tooltip("Set this to be the network address of the mjpg stream. ")]
     [SerializeField]
     private string streamAddress;
-
+    
+    private int index = 0;
+#if NET_4_6
+    private System.Drawing.Bitmap bmp = null;
+#endif
     public string StreamAddress
     {
         get => streamAddress;
@@ -68,6 +76,27 @@ public class MjpegTexture : MonoBehaviour
     public bool autoPlay = true;
 
     private bool playing = false;
+    
+    bool downloading = false;
+
+    byte[] imgBytes;
+
+    bool decoding = false;
+
+    private int resetAfterThisManyFrames = 30;
+    public int ResetAfterThisManyFrames
+    {
+        get { return resetAfterThisManyFrames; }
+        set
+        {
+            this.resetAfterThisManyFrames = value;
+            if (mjpeg != null)
+            {
+                mjpeg.ResetAfterThisManyFrames = value;
+            }
+        }
+    }
+    // Update is called once per frame
     public void Start()
     {
         if (material == null)
@@ -92,6 +121,7 @@ public class MjpegTexture : MonoBehaviour
             mjpeg = new MjpegProcessor(chunkSize * 1024);
             mjpeg.FrameReady += OnMjpegFrameReady;
             mjpeg.Error += OnMjpegError;
+            mjpeg.ResetAfterThisManyFrames = ResetAfterThisManyFrames;
         }
     }
     public void Play()
@@ -117,8 +147,8 @@ public class MjpegTexture : MonoBehaviour
             }
         }
     }
-
-    public static byte[] BitmapToByteArray(Bitmap bitmap, byte[] reuse)
+#if NET_4_6
+    static byte[] BitmapToByteArray(Bitmap bitmap, byte[] reuse)
     {
 
         BitmapData bmpdata = null;
@@ -146,9 +176,6 @@ public class MjpegTexture : MonoBehaviour
         }
 
     }
-    
-    private int index = 0;
-    private System.Drawing.Bitmap bmp = null;
     private async Task LoadJpgData(byte[] bytes)
     {
         int height = 1;
@@ -203,6 +230,33 @@ public class MjpegTexture : MonoBehaviour
 
         material.mainTexture = tex;
     }
+#else 
+    private async Task LoadJpgData(byte[] bytes)
+    {
+        // .NET Standard 2.0 Implementation
+        decoding = true;
+        await Task.Run(() =>
+        {
+            jpeg.ParseData(bytes);
+            imgBytes = jpeg.DecodeScan(imgBytes, true);
+        });
+
+        decoding = false;
+        // Could have been destroyed during the Task
+        if (material == null)
+        {
+            return;
+        }
+        if (tex == null)
+        {
+            tex = new Texture2D(jpeg.Width, jpeg.Height, TextureFormat.RGB24, false);
+        }
+        tex.LoadRawTextureData(imgBytes);
+        tex.Apply();
+
+        material.mainTexture = tex;
+    }
+#endif
     private void OnMjpegFrameReady(object sender, FrameReadyEventArgs e)
     {
         updateFrame = true;
@@ -212,12 +266,6 @@ public class MjpegTexture : MonoBehaviour
         Debug.Log("Error received while reading the MJPEG.");
     }
 
-    bool downloading = false;
-
-    byte[] imgBytes;
-
-    bool decoding = false;
-    // Update is called once per frame
     async void Update()
     {
         if (!playing)

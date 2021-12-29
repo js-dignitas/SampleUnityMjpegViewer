@@ -27,6 +27,8 @@ public class MjpegProcessor {
     public event EventHandler<FrameReadyEventArgs> FrameReady;
     public event EventHandler<ErrorEventArgs> Error;
 
+    public int ResetAfterThisManyFrames = 30;
+    
     public MjpegProcessor(int chunkSize = 4 * 1024)
     {
         _context = SynchronizationContext.Current;
@@ -123,7 +125,7 @@ public class MjpegProcessor {
         return -1;
     }
 
-    byte[] imageBuffer = new byte[1024 * 1024];
+    byte[] imageBuffer = new byte[3 * 1024 * 1024];
 
     int count = 0;
     private void OnGetResponse(IAsyncResult asyncResult)
@@ -188,7 +190,18 @@ public class MjpegProcessor {
                             // tell whoever's listening that we have a frame to draw
                             if (FrameReady != null)
                                 FrameReady(this, new FrameReadyEventArgs());
-                            
+
+                            if (ResetAfterThisManyFrames > 0)
+                            {
+                                count++;
+                                if (count > ResetAfterThisManyFrames)
+                                {
+                                    resp.Close();
+                                    Refresh();
+                                    break;
+                                }
+                            }
+
                             // copy the leftover data to the start
                             Array.Copy(readBuf, imageEnd, readBuf, 0, bufLength - imageEnd);
 
