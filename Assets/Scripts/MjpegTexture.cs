@@ -1,9 +1,11 @@
 using UnityEngine;
 using System;
-using System.Collections;
-using UnityEngine.Networking;
 using System.IO;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using Graphics = System.Drawing.Graphics;
 
 /// <summary>
 /// A Unity3D Script to dipsplay Mjpeg streams. Apply this script to the mesh that you want to use to view the Mjpeg stream. 
@@ -115,26 +117,88 @@ public class MjpegTexture : MonoBehaviour
             }
         }
     }
+
+    public static byte[] BitmapToByteArray(Bitmap bitmap, byte[] reuse)
+    {
+
+        BitmapData bmpdata = null;
+
+        try
+        {
+            bmpdata = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly, bitmap.PixelFormat);
+            int numbytes = bmpdata.Stride * bitmap.Height;
+            byte[] bytedata = reuse;
+            if (bytedata == null || bytedata.Length != numbytes)
+            {
+                bytedata = new byte[numbytes];
+            }
+
+            IntPtr ptr = bmpdata.Scan0;
+
+            Marshal.Copy(ptr, bytedata, 0, numbytes);
+
+            return bytedata;
+        }
+        finally
+        {
+            if (bmpdata != null)
+                bitmap.UnlockBits(bmpdata);
+        }
+
+    }
+    
+    private int index = 0;
+    private System.Drawing.Bitmap bmp = null;
     private async Task LoadJpgData(byte[] bytes)
     {
-        decoding = true;
+        int height = 1;
+        int width = 1;
+        
         await Task.Run(() =>
         {
-            jpeg.ParseData(bytes);
-            img = jpeg.DecodeScan(img, true);
+            // I tested with System.Threading.Thread.Sleep(1000) here to make 
+            // sure that even if this goes slow, it does not back up a bunch of mjpeg 
+            // frames in a buffer.  The frames stay up to date
+            using (MemoryStream inStream = new MemoryStream(bytes))
+            {
+                var image = System.Drawing.Image.FromStream(inStream, true, false);
+                height = image.Size.Height;
+                width = image.Size.Width;
+
+                // Reusing the bitmap if possible
+                if (bmp == null || bmp.Size.Height != height || bmp.Size.Width != width)
+                {
+                    bmp = new System.Drawing.Bitmap(image);
+                }
+                else
+                {
+                    // Draws into bmp
+                    using (Graphics graphics = Graphics.FromImage(bmp))
+                    {
+                        graphics.DrawImage(image, 0, 0, width, height);
+                    }
+                }
+
+                // Reusing imgBytes if possible
+                imgBytes = BitmapToByteArray(bmp, imgBytes);
+            }
         });
 
-        decoding = false;
         // Could have been destroyed during the Task
         if (material == null)
         {
             return;
         }
-        if (tex == null)
+        
+        // Reusing Texture2D if possible
+        if (tex == null || tex.width != width || tex.height != height)
         {
-            tex = new Texture2D(jpeg.Width, jpeg.Height, TextureFormat.RGB24, false);
+            tex = new Texture2D(width, height, TextureFormat.BGRA32, false);
         }
-        tex.LoadRawTextureData(img);
+
+        // Loading the bytes from the bitmap
+        tex.LoadRawTextureData(imgBytes);
+
         tex.Apply();
 
         material.mainTexture = tex;
@@ -150,21 +214,24 @@ public class MjpegTexture : MonoBehaviour
 
     bool downloading = false;
 
-    byte[] img;
+    byte[] imgBytes;
 
     bool decoding = false;
     // Update is called once per frame
     async void Update()
     {
+        if (!playing)
+            return;
+        
         deltaTime += Time.deltaTime;
 
         if (updateFrame)
         {
             if (!decoding)
             {
+                decoding = true;
                 if (mjpeg.CurrentFrame != null)
                 {
-                    //tex.LoadImage(mjpeg.CurrentFrame);
                     await LoadJpgData(mjpeg.CurrentFrame);
                 }
 
@@ -178,6 +245,7 @@ public class MjpegTexture : MonoBehaviour
                 mjpegDeltaTime += (deltaTime - mjpegDeltaTime) * 0.2f;
 
                 deltaTime = 0.0f;
+                decoding = false;
             }
         }
     }
@@ -191,7 +259,7 @@ public class MjpegTexture : MonoBehaviour
         Rect rect = new Rect(20, 20 + (h * 4 / 100 + 10), w, h * 2 / 100);
         style.alignment = TextAnchor.UpperLeft;
         style.fontSize = h * 4 / 100;
-        style.normal.textColor = new Color(255, 255, 255, 255);
+        style.normal.textColor = new UnityEngine.Color(255, 255, 255, 255);
         float msec = mjpegDeltaTime * 1000.0f;
         float fps = 1.0f / mjpegDeltaTime;
         string text = string.Format("MJPEG: {0:0.0} ms ({1:0.} fps)", msec, fps);

@@ -66,6 +66,11 @@ public class MjpegProcessor {
     {
         //UnityEngine.Debug.Log("Stream stopped");
         _streamActive = false;
+        if (request != null)
+        {
+            request.Abort();
+            request = null;
+        }
     }
     public static int FindBytes(byte[] buff, int buffLength, byte[] search)
     {
@@ -183,13 +188,7 @@ public class MjpegProcessor {
                             // tell whoever's listening that we have a frame to draw
                             if (FrameReady != null)
                                 FrameReady(this, new FrameReadyEventArgs());
-                            count++;
-                            if (count > 10)
-                            {
-                                resp.Close();
-                                Refresh();
-                                break;
-                            }
+                            
                             // copy the leftover data to the start
                             Array.Copy(readBuf, imageEnd, readBuf, 0, bufLength - imageEnd);
 
@@ -217,8 +216,8 @@ public class MjpegProcessor {
         catch (Exception ex)
         {
             UnityEngine.Debug.LogException(ex);
-            if (Error != null)
-                _context.Post(delegate { Error(this, new ErrorEventArgs() { Message = ex.Message }); }, null);
+            //if (Error != null)
+            //    _context.Post(delegate { Error(this, new ErrorEventArgs() { Message = ex.Message }); }, null);
 
             return;
         }
