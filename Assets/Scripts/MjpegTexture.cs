@@ -70,6 +70,7 @@ public class MjpegTexture : MonoBehaviour
 
     float deltaTime = 0.0f;
     float mjpegDeltaTime = 0.0f;
+    private float startTime = 0.0f;
 
     Jpeg.Jpeg jpeg = new Jpeg.Jpeg();
 
@@ -83,17 +84,13 @@ public class MjpegTexture : MonoBehaviour
 
     bool decoding = false;
 
-    private int resetAfterThisManyFrames = 30;
-    public int ResetAfterThisManyFrames
+    private float resetAfterThisManySeconds = 30;
+    public float ResetAfterThisManySeconds
     {
-        get { return resetAfterThisManyFrames; }
+        get { return resetAfterThisManySeconds; }
         set
         {
-            this.resetAfterThisManyFrames = value;
-            if (mjpeg != null)
-            {
-                mjpeg.ResetAfterThisManyFrames = value;
-            }
+            this.resetAfterThisManySeconds = value;
         }
     }
     // Update is called once per frame
@@ -121,7 +118,6 @@ public class MjpegTexture : MonoBehaviour
             mjpeg = new MjpegProcessor(chunkSize * 1024);
             mjpeg.FrameReady += OnMjpegFrameReady;
             mjpeg.Error += OnMjpegError;
-            mjpeg.ResetAfterThisManyFrames = ResetAfterThisManyFrames;
         }
     }
     public void Play()
@@ -132,6 +128,7 @@ public class MjpegTexture : MonoBehaviour
             playing = true;
             Uri mjpegAddress = new Uri(streamAddress);
             mjpeg.ParseStream(mjpegAddress);
+            startTime = UnityEngine.Time.realtimeSinceStartup;
         }
     }
 
@@ -142,6 +139,7 @@ public class MjpegTexture : MonoBehaviour
             playing = false;
             if (mjpeg != null)
             {
+                Debug.Log("Stopping Mjpeg Stream");
                 mjpeg.StopStream();
                 mjpeg = null;
             }
@@ -295,6 +293,15 @@ public class MjpegTexture : MonoBehaviour
                 deltaTime = 0.0f;
                 decoding = false;
             }
+        }
+
+        if (resetAfterThisManySeconds > 0.0 && 
+            (Time.realtimeSinceStartup - startTime) > resetAfterThisManySeconds)
+        {
+            Debug.Log("Reloading Stream");
+            Stop();
+            await Task. 
+            Play();
         }
     }
 

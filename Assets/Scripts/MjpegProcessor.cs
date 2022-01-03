@@ -27,8 +27,6 @@ public class MjpegProcessor {
     public event EventHandler<FrameReadyEventArgs> FrameReady;
     public event EventHandler<ErrorEventArgs> Error;
 
-    public int ResetAfterThisManyFrames = 30;
-    
     public MjpegProcessor(int chunkSize = 4 * 1024)
     {
         _context = SynchronizationContext.Current;
@@ -51,7 +49,7 @@ public class MjpegProcessor {
         this.uri = uri;
         this.username = username;
         this.password = password;
-        //Debug.Log("Parsing Stream " + uri.ToString());
+        Debug.Log("Parsing Stream " + uri.ToString());
         request = (HttpWebRequest)WebRequest.Create(uri);
         if (!string.IsNullOrEmpty(username) || !string.IsNullOrEmpty(password))
             request.Credentials = new NetworkCredential(username, password);
@@ -66,10 +64,10 @@ public class MjpegProcessor {
     }
     public void StopStream()
     {
-        //UnityEngine.Debug.Log("Stream stopped");
         _streamActive = false;
         if (request != null)
         {
+            UnityEngine.Debug.Log("MjpegProcessor aborting request");
             request.Abort();
             request = null;
         }
@@ -133,7 +131,7 @@ public class MjpegProcessor {
         count = 0;
         //Debug.Log("OnGetResponse");
 
-        //Debug.Log("Starting request");
+        Debug.Log("MjpegProcessor Starting request");
         // get the response
         HttpWebRequest req = (HttpWebRequest)asyncResult.AsyncState;
 
@@ -141,7 +139,7 @@ public class MjpegProcessor {
         {
             //Debug.Log(System.Threading.Thread.CurrentThread.Name + ": OnGetResponse try entered.");
             HttpWebResponse resp = (HttpWebResponse)req.EndGetResponse(asyncResult);
-            //Debug.Log("response received");
+            Debug.Log("response received");
             // find our magic boundary value
             string contentType = resp.Headers["Content-Type"];
             if (!string.IsNullOrEmpty(contentType) && !contentType.Contains("="))
@@ -191,17 +189,6 @@ public class MjpegProcessor {
                             if (FrameReady != null)
                                 FrameReady(this, new FrameReadyEventArgs());
 
-                            if (ResetAfterThisManyFrames > 0)
-                            {
-                                count++;
-                                if (count > ResetAfterThisManyFrames)
-                                {
-                                    resp.Close();
-                                    Refresh();
-                                    break;
-                                }
-                            }
-
                             // copy the leftover data to the start
                             Array.Copy(readBuf, imageEnd, readBuf, 0, bufLength - imageEnd);
 
@@ -229,11 +216,12 @@ public class MjpegProcessor {
         catch (Exception ex)
         {
             UnityEngine.Debug.LogException(ex);
+            HttpWebResponse resp = (HttpWebResponse)req.EndGetResponse(asyncResult);
+            resp.Close();
             //if (Error != null)
             //    _context.Post(delegate { Error(this, new ErrorEventArgs() { Message = ex.Message }); }, null);
-
-            return;
         }
+        Debug.Log("MjpegProcessor no more connection");
     }
 }
 
