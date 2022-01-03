@@ -300,7 +300,6 @@ public class MjpegTexture : MonoBehaviour
         {
             Debug.Log("Reloading Stream");
             Stop();
-            await Task. 
             Play();
         }
     }
