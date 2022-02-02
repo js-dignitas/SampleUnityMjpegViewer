@@ -27,8 +27,6 @@ public class MjpegProcessor {
     public event EventHandler<FrameReadyEventArgs> FrameReady;
     public event EventHandler<ErrorEventArgs> Error;
 
-    public int ResetAfterThisManyFrames = 30;
-    
     public MjpegProcessor(int chunkSize = 4 * 1024)
     {
         _context = SynchronizationContext.Current;
@@ -51,7 +49,7 @@ public class MjpegProcessor {
         this.uri = uri;
         this.username = username;
         this.password = password;
-        //Debug.Log("Parsing Stream " + uri.ToString());
+        Debug.Log("Parsing Stream " + uri.ToString());
         request = (HttpWebRequest)WebRequest.Create(uri);
         if (!string.IsNullOrEmpty(username) || !string.IsNullOrEmpty(password))
             request.Credentials = new NetworkCredential(username, password);
@@ -66,12 +64,22 @@ public class MjpegProcessor {
     }
     public void StopStream()
     {
-        //UnityEngine.Debug.Log("Stream stopped");
+        var tmp = request;
         _streamActive = false;
-        if (request != null)
+        // Now that _streamActive is false, the thread that is reading from the stream might
+        // see it if its not waiting on EndGetResponse.  The other thread could set request to null
+        if (tmp != null)
         {
-            request.Abort();
-            request = null;
+            UnityEngine.Debug.Log("MjpegProcessor aborting request");
+            try
+            {
+                tmp.Abort();
+                request = null;
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
         }
     }
     public static int FindBytes(byte[] buff, int buffLength, byte[] search)
@@ -130,10 +138,15 @@ public class MjpegProcessor {
     int count = 0;
     private void OnGetResponse(IAsyncResult asyncResult)
     {
+        if (request == null)
+        {
+            // request was cancelled
+            return;
+        }
         count = 0;
         //Debug.Log("OnGetResponse");
 
-        //Debug.Log("Starting request");
+        Debug.Log("MjpegProcessor Starting request");
         // get the response
         HttpWebRequest req = (HttpWebRequest)asyncResult.AsyncState;
 
@@ -141,9 +154,9 @@ public class MjpegProcessor {
         {
             //Debug.Log(System.Threading.Thread.CurrentThread.Name + ": OnGetResponse try entered.");
             HttpWebResponse resp = (HttpWebResponse)req.EndGetResponse(asyncResult);
-            //Debug.Log("response received");
             // find our magic boundary value
             string contentType = resp.Headers["Content-Type"];
+            Debug.Log("response received. " + resp.StatusCode + " content type " + contentType);
             if (!string.IsNullOrEmpty(contentType) && !contentType.Contains("="))
             {
                 Debug.Log("MJPEG Exception thrown");
@@ -153,87 +166,87 @@ public class MjpegProcessor {
             string boundary = resp.Headers["Content-Type"].Split('=')[1].Replace("\"", "");
             byte[] boundaryBytes = Encoding.UTF8.GetBytes(boundary.StartsWith("--") ? boundary : "--" + boundary);
 
-            Stream s = resp.GetResponseStream();
-            BinaryReader br = new BinaryReader(s);
-
-            _streamActive = true;
-            int bufLength = br.Read(readBuf, 0, readBuf.Length);
-
-            while (_streamActive)
+            using (Stream s = resp.GetResponseStream())
             {
-                // find the JPEG header
-                int imageStart = FindBytes(readBuf, bufLength, JpegHeader);// readBuf.Find(JpegHeader);
+                Debug.Log("Got stream");
+                BinaryReader br = new BinaryReader(s);
 
-                if (imageStart != -1)
+                _streamActive = true;
+                int bufLength = br.Read(readBuf, 0, readBuf.Length);
+                Debug.Log("Read " + bufLength + " bytes");
+                if (contentType == "text/html; charset=utf-8")
                 {
-                    // copy the start of the JPEG image to the imageBuffer
-                    int size = bufLength - imageStart;
-                    Array.Copy(readBuf, imageStart, imageBuffer, 0, size);
+                    Decoder utf8Decoder = Encoding.UTF8.GetDecoder();
+                    string str = Encoding.UTF8.GetString(readBuf, 0, bufLength);
+                    Debug.Log("Response from server:\n" + str);
+                    throw new Exception("Not MJPEG stream");
+                }
 
-                    while (true)
+                while (_streamActive)
+                {
+                    // find the JPEG header
+                    int imageStart = FindBytes(readBuf, bufLength, JpegHeader); // readBuf.Find(JpegHeader);
+
+                    if (imageStart != -1)
                     {
-                        bufLength = br.Read(readBuf, 0, readBuf.Length);
+                        // copy the start of the JPEG image to the imageBuffer
+                        int size = bufLength - imageStart;
+                        Array.Copy(readBuf, imageStart, imageBuffer, 0, size);
 
-                        // Find the end of the jpeg
-                        int imageEnd = FindBytes(readBuf, bufLength, boundaryBytes);
-                        if (imageEnd != -1)
+                        while (_streamActive)
                         {
-                            // copy the remainder of the JPEG to the imageBuffer
-                            Array.Copy(readBuf, 0, imageBuffer, size, imageEnd);
-                            size += imageEnd;
+                            bufLength = br.Read(readBuf, 0, readBuf.Length);
 
-                            // Copy the latest frame into `CurrentFrame`
-                            byte[] frame = new byte[size];
-                            Array.Copy(imageBuffer, 0, frame, 0, size);
-                            CurrentFrame = frame;
-
-                            // tell whoever's listening that we have a frame to draw
-                            if (FrameReady != null)
-                                FrameReady(this, new FrameReadyEventArgs());
-
-                            if (ResetAfterThisManyFrames > 0)
+                            // Find the end of the jpeg
+                            int imageEnd = FindBytes(readBuf, bufLength, boundaryBytes);
+                            if (imageEnd != -1)
                             {
-                                count++;
-                                if (count > ResetAfterThisManyFrames)
-                                {
-                                    resp.Close();
-                                    Refresh();
-                                    break;
-                                }
+                                // copy the remainder of the JPEG to the imageBuffer
+                                Array.Copy(readBuf, 0, imageBuffer, size, imageEnd);
+                                size += imageEnd;
+
+                                // Copy the latest frame into `CurrentFrame`
+                                byte[] frame = new byte[size];
+                                Array.Copy(imageBuffer, 0, frame, 0, size);
+                                CurrentFrame = frame;
+
+                                // tell whoever's listening that we have a frame to draw
+                                if (FrameReady != null)
+                                    FrameReady(this, new FrameReadyEventArgs());
+
+                                // copy the leftover data to the start
+                                Array.Copy(readBuf, imageEnd, readBuf, 0, bufLength - imageEnd);
+
+                                // fill the remainder of the readBufer with new data and start over
+                                byte[] temp = br.ReadBytes(imageEnd);
+
+                                Array.Copy(temp, 0, readBuf, bufLength - imageEnd, temp.Length);
+                                // done with reading jpeg loop
+                                break;
                             }
 
-                            // copy the leftover data to the start
-                            Array.Copy(readBuf, imageEnd, readBuf, 0, bufLength - imageEnd);
+                            // copy all of the data to the imageBuffer
+                            Array.Copy(readBuf, 0, imageBuffer, size, bufLength);
+                            size += bufLength;
 
-                            // fill the remainder of the readBufer with new data and start over
-                            byte[] temp = br.ReadBytes(imageEnd);
-
-                            Array.Copy(temp, 0, readBuf, bufLength - imageEnd, temp.Length);
-                            break;
-                        }
-
-                        // copy all of the data to the imageBuffer
-                        Array.Copy(readBuf, 0, imageBuffer, size, bufLength);
-                        size += bufLength;
-
-                        if (!_streamActive)
-                        {
-                            resp.Close();
-                            break;
-                        }
+                        } // while reading jpeg
                     }
-                }
-            }
+                } // for each jpeg
+
+            } // using stream
             resp.Close();
+            request = null;
         }
         catch (Exception ex)
         {
             UnityEngine.Debug.LogException(ex);
-            //if (Error != null)
-            //    _context.Post(delegate { Error(this, new ErrorEventArgs() { Message = ex.Message }); }, null);
-
-            return;
+            
+            // try closing it?
+            HttpWebResponse resp = (HttpWebResponse)req.EndGetResponse(asyncResult);
+            resp.Close();
+            request = null;
         }
+        Debug.Log("MjpegProcessor no more connection");
     }
 }
 

@@ -9,6 +9,7 @@ using Graphics = System.Drawing.Graphics;
 #endif
 
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 
 /// <summary>
@@ -70,6 +71,7 @@ public class MjpegTexture : MonoBehaviour
 
     float deltaTime = 0.0f;
     float mjpegDeltaTime = 0.0f;
+    private float startTime = 0.0f;
 
     Jpeg.Jpeg jpeg = new Jpeg.Jpeg();
 
@@ -83,19 +85,17 @@ public class MjpegTexture : MonoBehaviour
 
     bool decoding = false;
 
-    private int resetAfterThisManyFrames = 30;
-    public int ResetAfterThisManyFrames
+    private float resetAfterThisManySeconds = 30;
+    public float ResetAfterThisManySeconds
     {
-        get { return resetAfterThisManyFrames; }
+        get { return resetAfterThisManySeconds; }
         set
         {
-            this.resetAfterThisManyFrames = value;
-            if (mjpeg != null)
-            {
-                mjpeg.ResetAfterThisManyFrames = value;
-            }
+            this.resetAfterThisManySeconds = value;
         }
     }
+    
+    private bool resetting = false;
     // Update is called once per frame
     public void Start()
     {
@@ -121,7 +121,6 @@ public class MjpegTexture : MonoBehaviour
             mjpeg = new MjpegProcessor(chunkSize * 1024);
             mjpeg.FrameReady += OnMjpegFrameReady;
             mjpeg.Error += OnMjpegError;
-            mjpeg.ResetAfterThisManyFrames = ResetAfterThisManyFrames;
         }
     }
     public void Play()
@@ -129,9 +128,11 @@ public class MjpegTexture : MonoBehaviour
         Init();
         if (!playing)
         {
+            Debug.Log("Mjpeg Play initiated");
             playing = true;
             Uri mjpegAddress = new Uri(streamAddress);
             mjpeg.ParseStream(mjpegAddress);
+            startTime = UnityEngine.Time.realtimeSinceStartup;
         }
     }
 
@@ -142,6 +143,7 @@ public class MjpegTexture : MonoBehaviour
             playing = false;
             if (mjpeg != null)
             {
+                Debug.Log("Stopping Mjpeg Stream");
                 mjpeg.StopStream();
                 mjpeg = null;
             }
@@ -266,35 +268,72 @@ public class MjpegTexture : MonoBehaviour
         Debug.Log("Error received while reading the MJPEG.");
     }
 
+    private bool inUpdate = false;
     async void Update()
     {
-        if (!playing)
+        // This is an async update, so even if it gets awaited, another Update will 
+        // still be called next frame.  To avoid any confusion, we are going to 
+        // flag it as inUpdate and leave it there is currently an awaited Update
+        // still happening
+        if (inUpdate)
             return;
         
-        deltaTime += Time.deltaTime;
-
-        if (updateFrame)
+        inUpdate = true;
+        try
         {
-            if (!decoding)
+            if (!playing)
+                return;
+
+            deltaTime += Time.deltaTime;
+
+            if (updateFrame)
             {
-                decoding = true;
-                if (mjpeg.CurrentFrame != null)
+                if (!decoding)
                 {
-                    await LoadJpgData(mjpeg.CurrentFrame);
+                    decoding = true;
+                    if (mjpeg.CurrentFrame != null)
+                    {
+                        await LoadJpgData(mjpeg.CurrentFrame);
+                    }
+
+                    updateFrame = false;
+
+                    if (material == null)
+                    {
+                        return;
+                    }
+
+                    mjpegDeltaTime += (deltaTime - mjpegDeltaTime) * 0.2f;
+
+                    deltaTime = 0.0f;
+                    decoding = false;
                 }
-
-                updateFrame = false;
-
-                if (material == null)
-                {
-                    return;
-                }
-
-                mjpegDeltaTime += (deltaTime - mjpegDeltaTime) * 0.2f;
-
-                deltaTime = 0.0f;
-                decoding = false;
             }
+
+            if (resetAfterThisManySeconds > 0.0 &&
+                (Time.realtimeSinceStartup - startTime) > resetAfterThisManySeconds)
+            {
+                Debug.Log("Reloading Stream");
+                mjpeg.StopStream();
+
+                // Wait a little bit to play again
+                await Task.Delay(1000);
+                // If Stop was not called during the Delay
+                if (playing)
+                {
+                    // set to false so Play will do its thing
+                    playing = false;
+                    Play();
+                }
+            }
+        }
+        catch(Exception e)
+        {
+            Debug.LogException(e);
+        }
+        finally
+        {
+            inUpdate = false;
         }
     }
 
